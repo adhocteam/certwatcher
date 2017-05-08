@@ -1,0 +1,7 @@
+[certwatcher]
+username=
+password=
+host=
+rcpt=
+from=certwatcher
+subjectprefix="[certwatcher]"
