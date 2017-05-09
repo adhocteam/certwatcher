@@ -19,12 +19,20 @@ import (
 var (
 	urlFile string
 	days    int
+	verbose bool
 	cfg     *ini.File
+)
+
+var (
+	errExpiringSoon error = errors.New("expiring soon")
+	errExpired            = errors.New("expired")
+	errTimeout            = errors.New("timeout connecting to host")
 )
 
 func init() {
 	flag.StringVar(&urlFile, "urls", "urls.csv", "path to CSV containing list of URLs to monitor")
 	flag.IntVar(&days, "days", 30, "number of days before triggering alert")
+	flag.BoolVar(&verbose, "v", false, "verbose output")
 }
 
 type Host struct {
@@ -56,27 +64,20 @@ func main() {
 
 	var wg sync.WaitGroup
 	for _, r := range records {
-		r := r
+		host, desc := r[0], r[1]
 
 		wg.Add(1)
 
 		go func() {
-			errc := make(chan error, 1)
-
-			go func() {
-				errc <- check(r[0])
-			}()
-
-			select {
-			case err := <-errc:
-				if err != nil {
-					notify(r)
+			if err := check(host); err != nil {
+				switch err {
+				case errExpiringSoon, errExpired:
+					notify(host, desc)
+					log.Printf("main: sent notifiction for host %s - %s", host, err)
+				default:
+					log.Printf("main: ERROR: unexpected error checking host %s - %s", host, err)
 				}
-
-			case <-time.Tick(5 * time.Second):
-				log.Println("ERROR: timeout checking", r[0])
 			}
-
 			wg.Done()
 		}()
 	}
@@ -88,13 +89,28 @@ func main() {
 }
 
 func check(host string) error {
-	log.Printf("check: host: %s", host)
-	// connect to host
-	conn, err := tls.Dial("tcp", host+":443", &tls.Config{
-		InsecureSkipVerify: true,
-	})
-	if err != nil {
-		return err
+	var conn *tls.Conn
+
+	errc := make(chan error, 1)
+	go func() {
+		var err error
+		conn, err = tls.Dial("tcp", host+":443", &tls.Config{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			errc <- err
+		}
+
+		errc <- nil
+	}()
+
+	select {
+	case err := <-errc:
+		if err != nil {
+			return err
+		}
+	case <-time.Tick(5 * time.Second):
+		return errTimeout
 	}
 
 	defer conn.Close()
@@ -102,23 +118,37 @@ func check(host string) error {
 		return err
 	}
 
-	for _, cert := range conn.ConnectionState().PeerCertificates {
-		// log.Printf("check: %s certificate for host %s expires after %s (%s)", host, cert.Subject.Names, cert.NotAfter, time.Until(cert.NotAfter))
+	for i, cert := range conn.ConnectionState().PeerCertificates {
+		if cert.IsCA {
+			continue
+		}
+
+		if verbose {
+			log.Printf("check: %s certificate %d: expires after %s (%s)", host, i, cert.NotAfter, time.Until(cert.NotAfter))
+			log.Printf("check: %s certificate %d: issuer: %s", host, i, cert.Issuer.Names)
+			log.Printf("check: %s certificate %d: names: %s", host, i, cert.Subject.Names)
+			log.Printf("check: %s certificate %d: DNSNames: %s", host, i, cert.DNSNames)
+		}
 
 		if time.Until(cert.NotAfter) < time.Duration(days)*time.Hour*24 {
-			return errors.New("expiring")
+			return errExpiringSoon
 		}
 
 		if time.Now().After(cert.NotAfter) {
-			return errors.New("expired")
+			return errExpired
 		}
 	}
+
+	log.Printf("check: %s - certificate is ok", host)
 
 	return nil
 }
 
-func notify(r []string) {
-	log.Println("notify", r)
+func notify(host, desc string) {
+	if !cfg.Section("certwatcher").Key("sendmail").MustBool() {
+		log.Println("notify: refusing to send email due to config.")
+		return
+	}
 
 	auth := smtp.PlainAuth("",
 		cfg.Section("certwatcher").Key("username").String(),
@@ -127,23 +157,24 @@ func notify(r []string) {
 	)
 
 	to := []string{cfg.Section("certwatcher").Key("rcpt").String()}
-	msg := []byte(strings.Join([]string{fmt.Sprintf("Subject: %s certificate expiring soon: %s", cfg.Section("certwatcher").Key("subjectprefix").String(), r[1]),
+	msg := []byte(strings.Join([]string{fmt.Sprintf("Subject: %s certificate expiring soon: %s", cfg.Section("certwatcher").Key("subjectprefix").String(), desc),
+		fmt.Sprintf("To: %s", cfg.Section("certwatcher").Key("rcpt").String()),
 		"",
-		fmt.Sprintf("The SSL certificate for the host %s (%s) is expiring in less than %d days.", r[0], r[1], days),
+		fmt.Sprintf("The SSL certificate for the host %s (%s) is expiring in less than %d days.", host, desc, days),
 		"",
 		"Please take appropriate action!",
 	},
 		"\r\n",
 	))
 
-	// fmt.Println(string(msg))
+	if verbose {
+		log.Println("notify: sending host %s expiration notification to %s", host, cfg.Section("certwatcher").Key("rcpt").String())
+	}
 
 	err := smtp.SendMail(cfg.Section("certwatcher").Key("host").String()+":587", auth, cfg.Section("certwatcher").Key("from").String(), to, msg)
 	if err != nil {
 		log.Fatalf("ERROR: could not send email: %s", err)
 	}
-
-	log.Printf("success: sent notification about %s to: %s", r[1], to)
 
 	return
 }
