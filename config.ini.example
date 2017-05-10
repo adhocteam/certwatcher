@@ -6,3 +6,4 @@ port=
 rcpt=
 from=certwatcher
 subjectprefix="[certwatcher]"
+sendmail=
