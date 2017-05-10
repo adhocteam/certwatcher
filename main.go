@@ -17,43 +17,28 @@ import (
 )
 
 var (
-	urlFile string
-	days    int
-	verbose bool
-	cfg     *ini.File
-)
-
-var (
 	errExpiringSoon error = errors.New("expiring soon")
 	errExpired            = errors.New("expired")
 	errTimeout            = errors.New("timeout connecting to host")
 )
 
-func init() {
-	flag.StringVar(&urlFile, "urls", "urls.csv", "path to CSV containing list of URLs to monitor")
-	flag.IntVar(&days, "days", 30, "number of days before triggering alert")
-	flag.BoolVar(&verbose, "v", false, "verbose output")
-}
-
-type Host struct {
-	Host, Desc string
-}
-
 func main() {
+	urlFile := flag.String("urls", "urls.csv", "path to CSV containing list of URLs to monitor")
+	days := flag.Int("days", 30, "number of days before triggering alert")
+	verbose := flag.Bool("v", false, "verbose output")
+
 	flag.Parse()
 
-	var err error
-
 	// read config
-	cfg, err = ini.Load("config.ini")
+	cfg, err := ini.Load("config.ini")
 	if err != nil {
-		log.Fatalf("ERROR: could not open config file: %s", err)
+		log.Fatalf("could not open config file: %s", err)
 	}
 
 	// load list of hosts to watch
-	f, err := os.Open(urlFile)
+	f, err := os.Open(*urlFile)
 	if err != nil {
-		log.Fatalf("ERROR: could not open URL file: %s", err)
+		log.Fatalf("could not open URL file: %s", err)
 	}
 
 	rdr := csv.NewReader(f)
@@ -69,10 +54,10 @@ func main() {
 		wg.Add(1)
 
 		go func() {
-			if err := check(host); err != nil {
+			if err := check(host, "443", *days, *verbose); err != nil {
 				switch err {
 				case errExpiringSoon, errExpired:
-					notify(host, desc)
+					notify(host, desc, cfg, *days, err, *verbose)
 					log.Printf("main: sent notifiction for host %s - %s", host, err)
 				default:
 					log.Printf("main: ERROR: unexpected error checking host %s - %s", host, err)
@@ -83,18 +68,15 @@ func main() {
 	}
 
 	wg.Wait()
-
-	// fin
-	os.Exit(0)
 }
 
-func check(host string) error {
+func check(host, port string, days int, verbose bool) error {
 	var conn *tls.Conn
 
 	errc := make(chan error, 1)
 	go func() {
 		var err error
-		conn, err = tls.Dial("tcp", host+":443", &tls.Config{
+		conn, err = tls.Dial("tcp", host+":"+port, &tls.Config{
 			InsecureSkipVerify: true,
 		})
 		if err != nil {
@@ -130,12 +112,12 @@ func check(host string) error {
 			log.Printf("check: %s certificate %d: DNSNames: %s", host, i, cert.DNSNames)
 		}
 
-		if time.Until(cert.NotAfter) < time.Duration(days)*time.Hour*24 {
-			return errExpiringSoon
-		}
-
 		if time.Now().After(cert.NotAfter) {
 			return errExpired
+		}
+
+		if time.Until(cert.NotAfter) < time.Duration(days)*time.Hour*24 {
+			return errExpiringSoon
 		}
 	}
 
@@ -144,23 +126,38 @@ func check(host string) error {
 	return nil
 }
 
-func notify(host, desc string) {
-	if !cfg.Section("certwatcher").Key("sendmail").MustBool() {
+func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool) {
+	section := cfg.Section("certwatcher")
+
+	if !section.Key("sendmail").MustBool() {
 		log.Println("notify: refusing to send email due to config.")
 		return
 	}
 
+	port := "587"
+	if section.Key("port").String() != "" {
+		port = section.Key("port").String()
+	}
+	mailhost := section.Key("host").String()
+
 	auth := smtp.PlainAuth("",
-		cfg.Section("certwatcher").Key("username").String(),
-		cfg.Section("certwatcher").Key("password").String(),
-		cfg.Section("certwatcher").Key("host").String(),
+		section.Key("username").String(),
+		section.Key("password").String(),
+		mailhost,
 	)
 
-	to := []string{cfg.Section("certwatcher").Key("rcpt").String()}
-	msg := []byte(strings.Join([]string{fmt.Sprintf("Subject: %s certificate expiring soon: %s", cfg.Section("certwatcher").Key("subjectprefix").String(), desc),
-		fmt.Sprintf("To: %s", cfg.Section("certwatcher").Key("rcpt").String()),
+	to := []string{section.Key("rcpt").String()}
+	var subject, body string
+	if err == errExpiringSoon {
+		subject = fmt.Sprintf("Subject: %s certificate expiring soon: %s", section.Key("subjectprefix").String(), desc)
+		body = fmt.Sprintf("The SSL certificate for the host %s (%s) is expiring in less than %d days.", host, desc, days)
+	} else if err == errExpired {
+		subject = fmt.Sprintf("Subject: %s certificate has expired! %s", section.Key("subjectprefix").String(), desc)
+		body = fmt.Sprintf("The SSL certificate for the host %s (%s) has expired!", host, desc)
+	}
+	msg := []byte(strings.Join([]string{subject,
 		"",
-		fmt.Sprintf("The SSL certificate for the host %s (%s) is expiring in less than %d days.", host, desc, days),
+		body,
 		"",
 		"Please take appropriate action!",
 	},
@@ -168,13 +165,10 @@ func notify(host, desc string) {
 	))
 
 	if verbose {
-		log.Println("notify: sending host %s expiration notification to %s", host, cfg.Section("certwatcher").Key("rcpt").String())
+		log.Println("notify: sending host %s expiration notification to %s", host, section.Key("rcpt").String())
 	}
 
-	err := smtp.SendMail(cfg.Section("certwatcher").Key("host").String()+":587", auth, cfg.Section("certwatcher").Key("from").String(), to, msg)
-	if err != nil {
-		log.Fatalf("ERROR: could not send email: %s", err)
+	if err := smtp.SendMail(host+":"+port, auth, section.Key("from").String(), to, msg); err != nil {
+		log.Fatalf("could not send email: %s", err)
 	}
-
-	return
 }
