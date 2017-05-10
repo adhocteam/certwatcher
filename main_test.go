@@ -30,6 +30,12 @@ func TestCheck(t *testing.T) {
 		},
 		{
 			time.Now(),
+			30,
+			30,
+			errExpiringSoon,
+		},
+		{
+			time.Now(),
 			29,
 			30,
 			errExpiringSoon,
