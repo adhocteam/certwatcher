@@ -54,6 +54,7 @@ func main() {
 		wg.Add(1)
 
 		go func() {
+			defer wg.Done()
 			if err := check(host, "443", *days, *verbose); err != nil {
 				switch err {
 				case errExpiringSoon, errExpired:
@@ -63,7 +64,6 @@ func main() {
 					log.Printf("main: ERROR: unexpected error checking host %s - %s", host, err)
 				}
 			}
-			wg.Done()
 		}()
 	}
 
@@ -168,7 +168,7 @@ func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool)
 		log.Printf("notify: sending host %s expiration notification to %s", host, section.Key("rcpt").String())
 	}
 
-	if err := smtp.SendMail(host+":"+port, auth, section.Key("from").String(), to, msg); err != nil {
+	if err := smtp.SendMail(mailhost+":"+port, auth, section.Key("from").String(), to, msg); err != nil {
 		log.Fatalf("could not send email: %s", err)
 	}
 }
