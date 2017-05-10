@@ -58,7 +58,7 @@ func main() {
 				switch err {
 				case errExpiringSoon, errExpired:
 					notify(host, desc, cfg, *days, err, *verbose)
-					log.Printf("main: sent notifiction for host %s - %s", host, err)
+					log.Printf("main: sent notification for host %s - %s", host, err)
 				default:
 					log.Printf("main: ERROR: unexpected error checking host %s - %s", host, err)
 				}
@@ -165,7 +165,7 @@ func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool)
 	))
 
 	if verbose {
-		log.Println("notify: sending host %s expiration notification to %s", host, section.Key("rcpt").String())
+		log.Printf("notify: sending host %s expiration notification to %s", host, section.Key("rcpt").String())
 	}
 
 	if err := smtp.SendMail(host+":"+port, auth, section.Key("from").String(), to, msg); err != nil {
