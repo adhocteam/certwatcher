@@ -6,8 +6,8 @@ APPNAME=certwatcher
 .PHONY: rpm clean
 
 buildlinux: clean
-		mkdir -p $(BUILD_DIR)
-		GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(APPNAME)
+	mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(APPNAME)
 
 rpm: buildlinux
 	cp config.ini.example $(BUILD_DIR)
