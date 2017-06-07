@@ -23,14 +23,15 @@ var (
 )
 
 func main() {
-	urlFile := flag.String("urls", "urls.csv", "path to CSV containing list of URLs to monitor")
+	urlFile := flag.String("urls", "/etc/certwatcher/urls.csv", "path to CSV containing list of URLs to monitor")
+	iniFile := flag.String("config", "/etc/certwatcher/config.ini", "path to config.ini")
 	days := flag.Int("days", 30, "number of days before triggering alert")
 	verbose := flag.Bool("v", false, "verbose output")
 
 	flag.Parse()
 
 	// read config
-	cfg, err := ini.Load("config.ini")
+	cfg, err := ini.Load(*iniFile)
 	if err != nil {
 		log.Fatalf("could not open config file: %s", err)
 	}
