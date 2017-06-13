@@ -157,6 +157,8 @@ func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool)
 		body = fmt.Sprintf("The SSL certificate for the host %s (%s) has expired!", host, desc)
 	}
 	msg := []byte(strings.Join([]string{subject,
+		fmt.Sprintf("To: %s", strings.Join(to, ", ")),
+		fmt.Sprintf("From: %s", section.Key("from").String()),
 		"",
 		body,
 		"",
