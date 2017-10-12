@@ -43,6 +43,7 @@ func main() {
 	}
 
 	rdr := csv.NewReader(f)
+	rdr.FieldsPerRecord = 2
 	records, err := rdr.ReadAll()
 	if err != nil {
 		log.Fatal(err)
@@ -51,7 +52,7 @@ func main() {
 	var wg sync.WaitGroup
 	for _, r := range records {
 		var host, desc string
-		if len(r) > 1 && len(r[1]) > 0 {
+		if r[1] != "" {
 			host, desc = r[0], r[1]
 		} else {
 			host, desc = r[0], r[0]
