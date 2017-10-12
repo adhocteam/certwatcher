@@ -52,10 +52,10 @@ func main() {
 	var wg sync.WaitGroup
 	for _, r := range records {
 		var host, desc string
-		if r[1] != "" {
-			host, desc = r[0], r[1]
-		} else {
-			host, desc = r[0], r[0]
+		host := r[0]
+		desc := r[1]
+		if desc == "" {
+			desc = host
 		}
 
 		wg.Add(1)
