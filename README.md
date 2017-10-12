@@ -4,10 +4,11 @@ utility to monitor the certificates in use by a host and alert if they're expiri
 
 ## Usage
 
-1. Create a list of URLs in a CSV file. Format is: host,description. For example:
+1. Create a list of URLs in a CSV file. Format is: host,description. The description is optional. For example:
 ```
 www.google.com,Google
 adhocteam.us,Ad Hoc homepage
+example.com,
 ```
 2. Add SMTP config values to `config.ini`
 3. Run the app
