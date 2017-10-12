@@ -92,7 +92,7 @@ func check(host, port string, days int, verbose bool) error {
 		if err != nil {
 			return err
 		}
-	case <-time.Tick(5 * time.Second):
+	case <-time.After(5 * time.Second):
 		return errTimeout
 	}
 
@@ -178,7 +178,7 @@ func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool)
 	select {
 	case err := <-errc:
 		log.Fatalf("could not send email: %s", err)
-	case <-time.Tick(30 * time.Second):
+	case <-time.After(30 * time.Second):
 		log.Fatalf("Timeout reaching mail server")
 	}
 }
