@@ -46,7 +46,7 @@ func main() {
 	rdr.FieldsPerRecord = 2
 	records, err := rdr.ReadAll()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("could not read %s: %s", *urlFile, err)
 	}
 
 	var wg sync.WaitGroup
