@@ -92,7 +92,7 @@ func check(host, port string, days int, verbose bool) error {
 		if err != nil {
 			return err
 		}
-	case <-time.Tick(5 * time.Second):
+	case <-time.After(5 * time.Second):
 		return errTimeout
 	}
 
@@ -171,7 +171,14 @@ func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool)
 		log.Printf("notify: sending host %s expiration notification to %s", host, section.Key("rcpt").String())
 	}
 
-	if err := smtp.SendMail(mailhost+":"+port, auth, section.Key("from").String(), to, msg); err != nil {
+	errc := make(chan error, 1)
+	go func() {
+		errc <- smtp.SendMail(mailhost+":"+port, auth, section.Key("from").String(), to, msg)
+	}()
+	select {
+	case err := <-errc:
 		log.Fatalf("could not send email: %s", err)
+	case <-time.After(30 * time.Second):
+		log.Fatalf("Timeout reaching mail server")
 	}
 }
