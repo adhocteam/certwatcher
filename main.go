@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"os"
 	"strings"
@@ -17,9 +18,8 @@ import (
 )
 
 var (
-	errExpiringSoon error = errors.New("expiring soon")
-	errExpired            = errors.New("expired")
-	errTimeout            = errors.New("timeout connecting to host")
+	errExpiringSoon = errors.New("expiring soon")
+	errExpired      = errors.New("expired")
 )
 
 func main() {
@@ -72,31 +72,16 @@ func main() {
 }
 
 func check(host, port string, days int, verbose bool) error {
-	var conn *tls.Conn
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", host+":"+port, &tls.Config{
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
 
-	errc := make(chan error, 1)
-	go func() {
-		var err error
-		conn, err = tls.Dial("tcp", host+":"+port, &tls.Config{
-			InsecureSkipVerify: true,
-		})
-		if err != nil {
-			errc <- err
-		}
-
-		errc <- nil
-	}()
-
-	select {
-	case err := <-errc:
-		if err != nil {
-			return err
-		}
-	case <-time.After(5 * time.Second):
-		return errTimeout
 	}
 
 	defer conn.Close()
+
 	if err := conn.Handshake(); err != nil {
 		return err
 	}
