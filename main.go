@@ -43,14 +43,18 @@ func main() {
 	}
 
 	rdr := csv.NewReader(f)
+	rdr.FieldsPerRecord = 2
 	records, err := rdr.ReadAll()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("could not read %s: %s", *urlFile, err)
 	}
 
 	var wg sync.WaitGroup
 	for _, r := range records {
 		host, desc := r[0], r[1]
+		if desc == "" {
+			desc = host
+		}
 
 		wg.Add(1)
 
