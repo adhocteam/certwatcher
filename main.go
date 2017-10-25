@@ -44,6 +44,7 @@ func main() {
 
 	rdr := csv.NewReader(f)
 	rdr.FieldsPerRecord = 2
+	rdr.Comment = '#'
 	records, err := rdr.ReadAll()
 	if err != nil {
 		log.Fatalf("could not read %s: %s", *urlFile, err)
