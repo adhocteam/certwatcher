@@ -82,7 +82,7 @@ func check(host, port string, days int, verbose bool) error {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-
+		return err
 	}
 
 	defer conn.Close()
