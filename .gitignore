@@ -23,5 +23,3 @@ _testmain.go
 *.test
 *.prof
 
-urls.csv
-config.ini
