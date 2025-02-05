@@ -15,7 +15,7 @@ test: clean build
 
 lambda: clean build
 	GOOS=linux go build -o main
-	zip terraform/example/certwatcher-lambda.zip main
+	zip terraform/example/certwatcher-lambda.zip $(APPNAME)
 
 clean:
 	rm -f main

@@ -27,21 +27,21 @@ resource "aws_iam_role_policy_attachment" "certwatcher" {
 }
 
 resource "aws_iam_role" "certwatcher-role" {
-  name_prefix        = "certwatcher-role-"
+  name_prefix = "certwatcher-role-"
   assume_role_policy = jsonencode(
-{
-  "Version": "2012-10-17",
-  "Statement": [
     {
-      "Action": "sts:AssumeRole",
-      "Principal": {
-        "Service": "lambda.amazonaws.com"
-      },
-      "Effect": "Allow",
-      "Sid": ""
-    }
-  ]
-})
+      "Version" : "2012-10-17",
+      "Statement" : [
+        {
+          "Action" : "sts:AssumeRole",
+          "Principal" : {
+            "Service" : "lambda.amazonaws.com"
+          },
+          "Effect" : "Allow",
+          "Sid" : ""
+        }
+      ]
+  })
 }
 
 resource "aws_iam_policy" "lambda-policy" {
@@ -49,19 +49,19 @@ resource "aws_iam_policy" "lambda-policy" {
   path        = "/"
   description = "Policy to allow certwatcher to "
   policy = jsonencode(
-{
-    "Version": "2012-10-17",
-    "Statement": [
+    {
+      "Version" : "2012-10-17",
+      "Statement" : [
         {
-            "Sid": "",
-            "Effect": "Allow",
-            "Action": [
-                "sns:Publish"
-            ],
-            "Resource": "*"
+          "Sid" : "",
+          "Effect" : "Allow",
+          "Action" : [
+            "sns:Publish"
+          ],
+          "Resource" : "*"
         }
-    ]
-})
+      ]
+  })
 }
 
 # associate AWS's default Lambda role
@@ -98,7 +98,7 @@ resource "aws_lambda_permission" "allow-cloudwatch-exec" {
 }
 
 resource "aws_cloudwatch_event_target" "lambda-target" {
-  rule = aws_cloudwatch_event_rule.event-rule.id
-  arn  = aws_lambda_function.certwatcher.arn
-  input = jsonencode(merge(cfg, {"topic" : aws_sns_topic.certwatcher.arn}))
+  rule  = aws_cloudwatch_event_rule.event-rule.id
+  arn   = aws_lambda_function.certwatcher.arn
+  input = jsonencode(merge(cfg, { "topic" : aws_sns_topic.certwatcher.arn }))
 }
