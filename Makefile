@@ -1,12 +1,16 @@
 APPNAME=certwatcher
 
-.PHONY: build local lambda clean
+.PHONY: build local test lambda clean
 
 build: 
 	go get && GOOS=linux go build -o $(APPNAME)
 
-local: clean build
+local: clean build test
 	go run main.go -l
+
+test: clean build
+	go test
+	echo " -- Tests Complete -- "
 
 lambda: clean build
 	GOOS=linux go build -o main

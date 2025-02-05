@@ -63,7 +63,7 @@ func TestCheck(t *testing.T) {
 			t.Fatalf("error getting port of test TLS server: %v", err)
 		}
 
-		if err := check("127.0.0.1", port, test.checkDaysExpiringWithin, false); err != test.err {
+		if err := check("127.0.0.1", port, test.checkDaysExpiringWithin); err != test.err {
 			t.Errorf("%d: want %v, got %v", i, test.err, err)
 		}
 		s.Close()
