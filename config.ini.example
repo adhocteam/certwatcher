@@ -1,9 +1,0 @@
-[certwatcher]
-username=
-password=
-host=
-port=
-rcpt=
-from=certwatcher
-subjectprefix="[certwatcher]"
-sendmail=

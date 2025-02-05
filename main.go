@@ -1,20 +1,23 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
-	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
 	"net"
-	"net/smtp"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
-	ini "gopkg.in/ini.v1"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go/aws"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -22,61 +25,64 @@ var (
 	errExpired      = errors.New("expired")
 )
 
+type Config struct {
+	URLs    []string `json:"urls"`
+	Days    int      `json:"days"`
+	Verbose bool     `json:"verbose"`
+	Topic   string   `json:"topic"`
+}
+
 func main() {
-	urlFile := flag.String("urls", "/etc/certwatcher/urls.csv", "path to CSV containing list of URLs to monitor")
-	iniFile := flag.String("config", "/etc/certwatcher/config.ini", "path to config.ini")
-	days := flag.Int("days", 30, "number of days before triggering alert")
-	verbose := flag.Bool("v", false, "verbose output")
 
+	cfgPath := flag.String("f", "", "path to json cfg.  this must be passed if running locally or not via lambda")
 	flag.Parse()
+	if len(*cfgPath) != 0 {
+		cfg := parseCfg(*cfgPath)
+		checkCerts(cfg)
+	} else {
+		lambda.Start(handle)
+	}
+}
 
-	// read config
-	cfg, err := ini.Load(*iniFile)
-	if err != nil {
-		log.Fatalf("could not open config file: %s", err)
+func handle(ctx context.Context, event json.RawMessage) {
+
+	var cfg Config
+	if err := json.Unmarshal(event, &cfg); err != nil {
+		log.Fatalf("Failed to unmarshal event: %v", err)
+	}
+	failures := checkCerts(cfg)
+	notify(ctx, failures, cfg.Topic)
+}
+
+func checkCerts(cfg Config) []string {
+
+	if cfg.Verbose {
+		log.SetLevel(log.DebugLevel)
 	}
 
-	// load list of hosts to watch
-	f, err := os.Open(*urlFile)
-	if err != nil {
-		log.Fatalf("could not open URL file: %s", err)
+	if len(cfg.URLs) == 0 {
+		log.Fatalf("No URLs found in %v", cfg)
 	}
 
-	rdr := csv.NewReader(f)
-	rdr.FieldsPerRecord = 2
-	rdr.Comment = '#'
-	records, err := rdr.ReadAll()
-	if err != nil {
-		log.Fatalf("could not read %s: %s", *urlFile, err)
-	}
-
+	var failures []string
 	var wg sync.WaitGroup
-	for _, r := range records {
-		host, desc := r[0], r[1]
-		if desc == "" {
-			desc = host
-		}
-
+	for _, url := range cfg.URLs {
 		wg.Add(1)
-
 		go func() {
 			defer wg.Done()
-			if err := check(host, "443", *days, *verbose); err != nil {
-				switch err {
-				case errExpiringSoon, errExpired:
-					notify(host, desc, cfg, *days, err, *verbose)
-					log.Printf("main: sent notification for host %s - %s", host, err)
-				default:
-					log.Printf("main: ERROR: unexpected error checking host %s - %s", host, err)
-				}
+			if err := check(url, "443", cfg.Days); err != nil {
+				msg := fmt.Sprintf("failed host check %s - %s", url, err)
+				log.Errorf(msg)
+				failures = append(failures, msg)
 			}
 		}()
 	}
 
 	wg.Wait()
+	return failures
 }
 
-func check(host, port string, days int, verbose bool) error {
+func check(host, port string, days int) error {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	conn, err := tls.DialWithDialer(dialer, "tcp", host+":"+port, &tls.Config{
 		InsecureSkipVerify: true,
@@ -96,12 +102,10 @@ func check(host, port string, days int, verbose bool) error {
 			continue
 		}
 
-		if verbose {
-			log.Printf("check: %s certificate %d: expires after %s (%s)", host, i, cert.NotAfter, time.Until(cert.NotAfter))
-			log.Printf("check: %s certificate %d: issuer: %s", host, i, cert.Issuer.Names)
-			log.Printf("check: %s certificate %d: names: %s", host, i, cert.Subject.Names)
-			log.Printf("check: %s certificate %d: DNSNames: %s", host, i, cert.DNSNames)
-		}
+		log.Debugf("check: %s certificate %d: expires after %s (%s)", host, i, cert.NotAfter, time.Until(cert.NotAfter))
+		log.Debugf("check: %s certificate %d: issuer: %s", host, i, cert.Issuer.Names)
+		log.Debugf("check: %s certificate %d: names: %s", host, i, cert.Subject.Names)
+		log.Debugf("check: %s certificate %d: DNSNames: %s", host, i, cert.DNSNames)
 
 		if time.Now().After(cert.NotAfter) {
 			return errExpired
@@ -112,63 +116,38 @@ func check(host, port string, days int, verbose bool) error {
 		}
 	}
 
-	log.Printf("check: %s - certificate is ok", host)
+	log.Infof("check: %s - certificate is ok", host)
 
 	return nil
 }
 
-func notify(host, desc string, cfg *ini.File, days int, err error, verbose bool) {
-	section := cfg.Section("certwatcher")
+func notify(ctx context.Context, failures []string, topicArn string) {
 
-	if !section.Key("sendmail").MustBool() {
-		log.Println("notify: refusing to send email due to config.")
+	awsConfig, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		fmt.Println("Couldn't load default configuration. Have you set up your AWS account?")
+		fmt.Println(err)
 		return
 	}
-
-	port := "587"
-	if section.Key("port").String() != "" {
-		port = section.Key("port").String()
+	client := sns.NewFromConfig(awsConfig)
+	for _, msg := range failures {
+		publishInput := sns.PublishInput{TopicArn: aws.String(topicArn), Message: aws.String(msg)}
+		_, err := client.Publish(ctx, &publishInput)
+		if err != nil {
+			log.Fatalf("Couldn't publish message to topic %v. %v", topicArn, err)
+		}
+		log.Infof("SNS notification sent: %s -> %s", msg, topicArn)
 	}
-	mailhost := section.Key("host").String()
+}
 
-	auth := smtp.PlainAuth("",
-		section.Key("username").String(),
-		section.Key("password").String(),
-		mailhost,
-	)
-
-	to := []string{section.Key("rcpt").String()}
-	var subject, body string
-	if err == errExpiringSoon {
-		subject = fmt.Sprintf("Subject: %s certificate expiring soon: %s", section.Key("subjectprefix").String(), desc)
-		body = fmt.Sprintf("The SSL certificate for the host %s (%s) is expiring in less than %d days.", host, desc, days)
-	} else if err == errExpired {
-		subject = fmt.Sprintf("Subject: %s certificate has expired! %s", section.Key("subjectprefix").String(), desc)
-		body = fmt.Sprintf("The SSL certificate for the host %s (%s) has expired!", host, desc)
+func parseCfg(cfgPath string) Config {
+	jsonFile, err := os.Open(cfgPath)
+	if err != nil {
+		fmt.Println(err)
 	}
-	msg := []byte(strings.Join([]string{subject,
-		fmt.Sprintf("To: %s", strings.Join(to, ", ")),
-		fmt.Sprintf("From: %s", section.Key("from").String()),
-		"",
-		body,
-		"",
-		"Please take appropriate action!",
-	},
-		"\r\n",
-	))
-
-	if verbose {
-		log.Printf("notify: sending host %s expiration notification to %s", host, section.Key("rcpt").String())
-	}
-
-	errc := make(chan error, 1)
-	go func() {
-		errc <- smtp.SendMail(mailhost+":"+port, auth, section.Key("from").String(), to, msg)
-	}()
-	select {
-	case err := <-errc:
-		log.Fatalf("could not send email: %s", err)
-	case <-time.After(30 * time.Second):
-		log.Fatalf("Timeout reaching mail server")
-	}
+	defer jsonFile.Close()
+	byteValue, _ := io.ReadAll(jsonFile)
+	var cfg Config
+	json.Unmarshal(byteValue, &cfg)
+	return cfg
 }

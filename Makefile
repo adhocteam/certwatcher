@@ -1,21 +1,21 @@
-MAINTAINER := Ad Hoc Ops <ops@adhocteam.us>
-VERSION_STRING ?= $(shell git describe --tags --long --dirty --always)
-BUILD_DIR := $(TMPDIR)$(APPNAME)-build
 APPNAME=certwatcher
 
-.PHONY: rpm clean
+.PHONY: build local test lambda clean
 
-buildlinux: clean
-	mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(APPNAME)
+build:
+	go get && GOOS=linux go build -o $(APPNAME)
 
-rpm: buildlinux
-	cp config.ini.example $(BUILD_DIR)
-	fpm -n $(APPNAME) -v $(VERSION_STRING) -a all -m "$(MAINTAINER)" \
-		--rpm-os linux -s dir -t rpm -f \
-		-a x86_64 -p $(BUILD_DIR)/$(APPNAME)-latest.rpm \
-		-C $(BUILD_DIR) \
-		./$(APPNAME)=/usr/bin/$(APPNAME) ./config.ini.example=/etc/certwatcher/config.ini.example
+local: clean build test
+	go run main.go -f cfg_example.json
+
+test: clean build
+	terraform fmt -recursive -write=true terraform
+	go test
+	@echo " -- Tests Complete -- \n"
+
+lambda: clean build
+	GOOS=linux go build -o main
+	zip terraform/example/certwatcher-lambda.zip $(APPNAME)
 
 clean:
-	rm -f *.rpm certwatcher
+	rm -f $(APPNAME)

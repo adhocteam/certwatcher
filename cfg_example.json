@@ -1,0 +1,10 @@
+{
+    "urls": [
+        "www.google.com",
+        "adhocteam.us",
+        "asdadsd.zaz"
+    ],
+    "days": 30,
+    "verbose": false,
+    "topic": ""
+}
