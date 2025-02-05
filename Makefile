@@ -11,7 +11,7 @@ local: clean build test
 test: clean build
 	terraform fmt -recursive -write=true terraform
 	go test
-	@echo " -- Tests Complete -- "
+	@echo " -- Tests Complete -- \n"
 
 lambda: clean build
 	GOOS=linux go build -o main
