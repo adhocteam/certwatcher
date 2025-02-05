@@ -3,15 +3,20 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go/aws"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -21,79 +26,60 @@ var (
 )
 
 type Config struct {
-	UrlFile string `json:"urlFile"`
-	Days    int    `json:"days"`
-	Verbose bool   `json:"verbose"`
+	URLs    []string `json:"urls"`
+	Days    int      `json:"days"`
+	Verbose bool     `json:"verbose"`
+	Topic   string   `json:"topic"`
 }
 
 func main() {
 
-	urlFile := flag.String("urls", "urls.csv", "path to CSV containing list of URLs to monitor")
-	days := flag.Int("days", 30, "number of days before triggering alert")
-	local := flag.Bool("l", false, "run locally")
-	verbose := flag.Bool("v", false, "verbose output")
+	cfgPath := flag.String("f", "", "path to json cfg.  this must be passed if running locally or not via lambda")
 	flag.Parse()
-
-	cfg := Config{
-		UrlFile: *urlFile,
-		Days:    *days,
-		Verbose: *verbose,
-	}
-
-	if *local {
+	if len(*cfgPath) != 0 {
+		cfg := parseCfg(*cfgPath)
 		checkCerts(cfg)
 	} else {
 		lambda.Start(handle)
 	}
-
 }
 
-func handle(ctx context.Context, cfg Config) {
-	checkCerts(cfg)
+func handle(ctx context.Context, event json.RawMessage) {
+
+	var cfg Config
+	if err := json.Unmarshal(event, &cfg); err != nil {
+		log.Fatalf("Failed to unmarshal event: %v", err)
+	}
+	failures := checkCerts(cfg)
+	notify(ctx, failures, cfg.Topic)
 }
 
-func checkCerts(cfg Config) {
+func checkCerts(cfg Config) []string {
 
 	if cfg.Verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	f, err := os.Open(cfg.UrlFile)
-	if err != nil {
-		log.Fatalf("could not open URL file: %s", err)
+	if len(cfg.URLs) == 0 {
+		log.Fatalf("No URLs found in %v", cfg)
 	}
 
-	rdr := csv.NewReader(f)
-	rdr.FieldsPerRecord = 2
-	rdr.Comment = '#'
-	records, err := rdr.ReadAll()
-	if err != nil {
-		log.Fatalf("could not read %s: %s", cfg.UrlFile, err)
-	}
-
-	var failed = false
+	var failures []string
 	var wg sync.WaitGroup
-	for _, r := range records {
-		host, desc := r[0], r[1]
-		if desc == "" {
-			desc = host
-		}
-
+	for _, url := range cfg.URLs {
 		wg.Add(1)
-
 		go func() {
 			defer wg.Done()
-			if err := check(host, "443", cfg.Days); err != nil {
-				failed = true
-				log.Errorf("failed host check %s (%s) - %s", host, desc, err)
+			if err := check(url, "443", cfg.Days); err != nil {
+				msg := fmt.Sprintf("failed host check %s - %s", url, err)
+				log.Errorf(msg)
+				failures = append(failures, msg)
 			}
 		}()
 	}
 
 	wg.Wait()
-	if failed {
-		log.Fatal("Cert Validation Failure")
-	}
+	return failures
 }
 
 func check(host, port string, days int) error {
@@ -133,4 +119,35 @@ func check(host, port string, days int) error {
 	log.Infof("check: %s - certificate is ok", host)
 
 	return nil
+}
+
+func notify(ctx context.Context, failures []string, topicArn string) {
+
+	awsConfig, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		fmt.Println("Couldn't load default configuration. Have you set up your AWS account?")
+		fmt.Println(err)
+		return
+	}
+	client := sns.NewFromConfig(awsConfig)
+	for _, msg := range failures {
+		publishInput := sns.PublishInput{TopicArn: aws.String(topicArn), Message: aws.String(msg)}
+		_, err := client.Publish(ctx, &publishInput)
+		if err != nil {
+			log.Fatalf("Couldn't publish message to topic %v. %v", topicArn, err)
+		}
+		log.Infof("SNS notification sent: %s -> %s", msg, topicArn)
+	}
+}
+
+func parseCfg(cfgPath string) Config {
+	jsonFile, err := os.Open(cfgPath)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer jsonFile.Close()
+	byteValue, _ := io.ReadAll(jsonFile)
+	var cfg Config
+	json.Unmarshal(byteValue, &cfg)
+	return cfg
 }
