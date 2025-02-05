@@ -18,4 +18,4 @@ lambda: clean build
 	zip terraform/example/certwatcher-lambda.zip $(APPNAME)
 
 clean:
-	rm -f main
+	rm -f $(APPNAME)
